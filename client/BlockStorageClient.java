@@ -45,8 +45,6 @@ public class BlockStorageClient {
             DataInputStream in = new DataInputStream(socket.getInputStream());
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
             Scanner scanner = new Scanner(System.in);
-
-            
             
         ) {
             System.out.print("Enter password for key: ");

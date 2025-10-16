@@ -21,3 +21,10 @@ Objetivo será mandar Keywords para o servidor (cifradas!) de modo a recolher os
 
 
 O prof já da impl do cliente e do server, mas esta tudo em plain text e tcp sockets
+
+Server tem que ter um salt
+
+Não usar SHA 256, usar slow hash functions 
+
+ver lab4
+

@@ -113,7 +113,7 @@ public class BlockStorageServer {
     }
 
     private static void searchBlocks(DataInputStream in, DataOutputStream out) throws IOException {
-        String keyword = in.readUTF().toLowerCase();
+        String keyword = in.readUTF();
         List<String> results = new ArrayList<>();
         for (Map.Entry<String, List<String>> entry : metadata.entrySet()) {
             if (entry.getValue().contains(keyword)) {

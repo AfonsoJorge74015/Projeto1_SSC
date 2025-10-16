@@ -31,6 +31,7 @@ public class BlockStorageClient {
     private static final int PROTECTION_KEY_SIZE = 256;
     private static SecretKey key;
     private static final String INDEX_FILE = "client_index.ser";
+    private static final String KEY_FILE = "keys.txt";
 
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
@@ -49,8 +50,8 @@ public class BlockStorageClient {
             
         ) {
             System.out.print("Enter password for key: ");
-            char[] password = scanner.nextLine().toCharArray();
-            key = loadOrGenKey("keys.txt", password);
+            char[] password = scanner.nextLine().toCharArray(); 
+            key = loadOrGenKey( KEY_FILE, password);
 
             while (true) {
                 System.out.print("Command (PUT/GET/LIST/SEARCH/EXIT): ");

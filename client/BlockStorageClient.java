@@ -45,7 +45,6 @@ public class BlockStorageClient {
             DataInputStream in = new DataInputStream(socket.getInputStream());
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
             Scanner scanner = new Scanner(System.in);
-            
         ) {
             System.out.print("Enter password for key: ");
             char[] password = scanner.nextLine().toCharArray(); 
@@ -67,8 +66,13 @@ public class BlockStorageClient {
                         System.out.print("Enter keywords (comma-separated): ");
                         String kwLine = scanner.nextLine();
                         List<String> keywords = new ArrayList<>();
-                        if (!kwLine.trim().isEmpty()) {
-                            for (String kw : kwLine.split(",")) keywords.add(kw.trim().toLowerCase());
+                        while(kwLine.trim().isEmpty()){
+                            System.out.print("\nNo keywords. Please input atleast one valid keyword\n");
+                            System.out.print("Enter keywords (comma-separated): ");
+                            kwLine = scanner.nextLine();
+                        }
+                        for (String kw : kwLine.split(",")){
+                            keywords.add(kw.trim().toLowerCase());
                         }
                         putFile(file, keywords, out, in);
                         saveIndex();
@@ -123,7 +127,7 @@ public class BlockStorageClient {
                 out.writeUTF(blockId);
                 out.writeInt(blockData.length);
                 out.write(blockData);
-		System.out.print("."); // Just for debug
+		        System.out.print("."); // Just for debug
 
                 // Send keywords for first block only
                 if (blockNum == 1) {
@@ -133,7 +137,6 @@ public class BlockStorageClient {
                         byte[] token = digest.digest(kw.getBytes(StandardCharsets.UTF_8));
                         out.writeUTF(Base64.getEncoder().encodeToString(token));
                     }
-		System.out.println("/nSent keywords./n"); // Just for debug    
                 } else {
                     out.writeInt(0); // no keywords for other blocks
                 }
@@ -173,7 +176,7 @@ public class BlockStorageClient {
                 in.readFully(encryptedData);           // read from server
                 byte[] data = decryptBlock(encryptedData, key); // then decrypt
 
-		System.out.print("."); // Just for debug 
+		        System.out.print("."); // Just for debug
                 fos.write(data);
             }
         }
@@ -184,14 +187,18 @@ public class BlockStorageClient {
     private static void searchFiles(String keyword, DataOutputStream out, DataInputStream in) throws IOException, Exception {
         out.writeUTF("SEARCH");
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] token = digest.digest(keyword.toLowerCase().getBytes(StandardCharsets.UTF_8));
+        byte[] token = digest.digest(keyword.getBytes(StandardCharsets.UTF_8));
         out.writeUTF(Base64.getEncoder().encodeToString(token));
         out.flush();
         int count = in.readInt();
-        System.out.println();	
-        System.out.println("Search results:");
-        for (int i = 0; i < count; i++) {
-            System.out.println(" - " + in.readUTF());
+        if(count > 0){
+            System.out.println("\nSearch results:");
+            for (int i = 0; i < count; i++) {
+                System.out.println(" - " + in.readUTF());
+            }
+            System.out.println();
+        } else {
+            System.out.println("\nNo files found\n");
         }
     }
 
@@ -216,7 +223,7 @@ public class BlockStorageClient {
     private static byte[] encryptBlock(byte[] data, SecretKey key) throws Exception {
         byte[] nonce = new byte[GCM_NONCE_LENGTH];
         new SecureRandom().nextBytes(nonce);
-       
+
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
         cipher.init(Cipher.ENCRYPT_MODE, key, spec);

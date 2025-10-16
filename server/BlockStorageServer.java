@@ -78,7 +78,7 @@ public class BlockStorageServer {
         if (keywordCount > 0) {
             List<String> keywords = new ArrayList<>();
             for (int i = 0; i < keywordCount; i++) {
-                keywords.add(in.readUTF().toLowerCase());
+                keywords.add(in.readUTF());
             }
             metadata.put(blockId, keywords);
             saveMetadata();
@@ -117,7 +117,7 @@ public class BlockStorageServer {
         List<String> results = new ArrayList<>();
         for (Map.Entry<String, List<String>> entry : metadata.entrySet()) {
             if (entry.getValue().contains(keyword)) {
-                results.add(entry.getKey());
+                results.add(entry.getKey().replace("_block_0", ""));
             }
         }
         out.writeInt(results.size());

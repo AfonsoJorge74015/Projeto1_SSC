@@ -28,7 +28,3 @@ Não usar SHA 256, usar slow hash functions
 
 ver lab4
 
-Questions:
-
-ficheiros duplicados (put de um ficheiro ja existente mantem apenas um ficheiro com novas kwords)
-

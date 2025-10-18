@@ -32,3 +32,10 @@ Questions:
 
 ficheiros duplicados (put de um ficheiro ja existente mantem apenas um ficheiro com novas kwords)
 
+salt no hashing das keywords?
+
+tendo em conta que os ficheiros sao guardados de forma persistente, há crash no caso de o cliente mudar a cifra utilizada
+e depois fazer get de um ficheiro que foi guardado com outra configuracao
+
+cifra utilizada nas chaves geradas ainda está hardcoded (AES/GCM/NoPaddign) (nao sei se deve ser utilizada a config do ficheiro ou nao)
+

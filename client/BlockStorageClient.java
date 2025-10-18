@@ -8,14 +8,12 @@ import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
-import javax.crypto.SecretKey;
+import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 import java.security.SecureRandom;
 import java.util.Base64;
+import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 import java.security.spec.KeySpec;
 import javax.sql.rowset.spi.SyncResolver;
@@ -23,20 +21,29 @@ import javax.sql.rowset.spi.SyncResolver;
 public class BlockStorageClient {
     private static final int PORT = 5000;
     private static final int BLOCK_SIZE = 4096;
-    private static final int GCM_NONCE_LENGTH = 12; 
-    private static final int AES_KEY_SIZE = 256; 
-    private static final int GCM_TAG_LENGTH = 128;
     private static final int SALT_LENGTH = 16;
     private static final int PBKDF2_ITERATIONS = 65536;
     private static final int PROTECTION_KEY_SIZE = 256;
-    private static SecretKey key;
+
+    private static CryptoConfig cryptoConfig;
+    private static SecretKey encryptionKey;
+    private static SecretKey macKey;
+
     private static final String INDEX_FILE = "client_index.ser";
     private static final String KEY_FILE = "keys.txt";
-
+    private static final String CONFIG_FILE = "cryptoconfig.txt";
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
 
-    public static void main(String[] args) throws IOException, ClassNotFoundException, Exception {
+    public static void main(String[] args) throws Exception {
+        try {
+            cryptoConfig = CryptoConfig.load(CONFIG_FILE);
+            System.out.println(cryptoConfig);
+        } catch (IOException e) {
+            System.err.println(e.getMessage());
+            return;
+        }
+
         loadIndex();
 
         Socket socket = new Socket("localhost", PORT);
@@ -44,11 +51,12 @@ public class BlockStorageClient {
         try (
             DataInputStream in = new DataInputStream(socket.getInputStream());
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            Scanner scanner = new Scanner(System.in);
+            Scanner scanner = new Scanner(System.in)
         ) {
             System.out.print("Enter password for key: ");
             char[] password = scanner.nextLine().toCharArray(); 
-            key = loadOrGenKey( KEY_FILE, password);
+            encryptionKey = loadOrGenKey( KEY_FILE, password);
+            macKey = genKey();
 
             while (true) {
                 System.out.print("Command (PUT/GET/LIST/SEARCH/EXIT): ");
@@ -85,6 +93,10 @@ public class BlockStorageClient {
                         break;
 
                     case "LIST":
+                        if(fileIndex.isEmpty()) {
+                            System.out.println("No stored files.");
+                            break;
+                        }
                         System.out.println("Stored files:");
                         for (String f : fileIndex.keySet()) System.out.println(" - " + f);
                         break;
@@ -121,7 +133,7 @@ public class BlockStorageClient {
                 byte[] rawData = Arrays.copyOf(buffer, bytesRead);
                 String blockId = file.getName() + "_block_" + blockNum++;
 
-                byte[] blockData = encryptBlock(rawData, key);
+                byte[] blockData = encryptBlock(rawData);
 
                 out.writeUTF("STORE_BLOCK");
                 out.writeUTF(blockId);
@@ -151,11 +163,11 @@ public class BlockStorageClient {
             }
         }
         fileIndex.put(file.getName(), blocks);
-	System.out.println();
-	System.out.println("File stored with " + blocks.size() + " blocks.");
+	    System.out.println();
+	    System.out.println("File stored with " + blocks.size() + " blocks.");
     }
 
-    private static void getFile(String filename, DataOutputStream out, DataInputStream in) throws IOException, Exception {
+    private static void getFile(String filename, DataOutputStream out, DataInputStream in) throws Exception {
         List<String> blocks = fileIndex.get(filename);
         if (blocks == null) {
 	    System.out.println();	    
@@ -174,7 +186,7 @@ public class BlockStorageClient {
                 }
                 byte[] encryptedData = new byte[length];
                 in.readFully(encryptedData);           // read from server
-                byte[] data = decryptBlock(encryptedData, key); // then decrypt
+                byte[] data = decryptBlock(encryptedData); // then decrypt
 
 		        System.out.print("."); // Just for debug
                 fos.write(data);
@@ -220,35 +232,153 @@ public class BlockStorageClient {
         }
     }
 
-    private static byte[] encryptBlock(byte[] data, SecretKey key) throws Exception {
-        byte[] nonce = new byte[GCM_NONCE_LENGTH];
+    //Encrypt/Decrypt
+    private static byte[] encryptBlock(byte[] data) throws Exception {
+        if (cryptoConfig.isAEAD()) {
+            return encryptAEAD(data);
+        } else {
+            byte[] ciphertext = encryptNonAEAD(data);
+            if (cryptoConfig.needsHMAC()) {
+                return addHMAC(ciphertext);
+            }
+            return ciphertext;
+        }
+    }
+
+    private static byte[] decryptBlock(byte[] encrypted) throws Exception {
+        if (cryptoConfig.isAEAD()) {
+            return decryptAEAD(encrypted);
+        } else {
+            if (cryptoConfig.needsHMAC()) {
+                encrypted = verifyAndRemoveHMAC(encrypted);
+            }
+            return decryptNonAEAD(encrypted);
+        }
+    }
+
+    //for AEAD
+    private static byte[] encryptAEAD(byte[] data) throws Exception {
+        int nonceLen = cryptoConfig.getNonceLength();
+        byte[] nonce = new byte[nonceLen];
         new SecureRandom().nextBytes(nonce);
 
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-        cipher.init(Cipher.ENCRYPT_MODE, key, spec);
-        byte[] ciphertext =cipher.doFinal(data);
+        Cipher cipher = Cipher.getInstance(cryptoConfig.getCipher());
+
+        if (cryptoConfig.getCipher().toUpperCase().contains("GCM")) {
+            GCMParameterSpec spec = new GCMParameterSpec(cryptoConfig.getTagLength(), nonce);
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, spec);
+        } else {
+            IvParameterSpec spec = new IvParameterSpec(nonce);
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, spec);
+        }
+
+        byte[] ciphertext = cipher.doFinal(data);
+
         byte[] result = new byte[nonce.length + ciphertext.length];
         System.arraycopy(nonce, 0, result, 0, nonce.length);
         System.arraycopy(ciphertext, 0, result, nonce.length, ciphertext.length);
-
         return result;
-
     }
 
-    public static byte[] decryptBlock(byte[] encrypted, SecretKey key) throws Exception {
-        byte[] nonce = new byte[GCM_NONCE_LENGTH];
-        System.arraycopy(encrypted, 0, nonce, 0, nonce.length);
-        byte[] ciphertext = new byte[encrypted.length - nonce.length];
-        System.arraycopy(encrypted, nonce.length, ciphertext, 0, ciphertext.length);
+    private static byte[] decryptAEAD(byte[] encrypted) throws Exception {
+        int nonceLen = cryptoConfig.getNonceLength();
+        byte[] nonce = new byte[nonceLen];
+        System.arraycopy(encrypted, 0, nonce, 0, nonceLen);
 
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-        cipher.init(Cipher.DECRYPT_MODE, key, spec);
+        byte[] ciphertext = new byte[encrypted.length - nonceLen];
+        System.arraycopy(encrypted, nonceLen, ciphertext, 0, ciphertext.length);
+
+        Cipher cipher = Cipher.getInstance(cryptoConfig.getCipher());
+
+        if (cryptoConfig.getCipher().toUpperCase().contains("GCM")) {
+            GCMParameterSpec spec = new GCMParameterSpec(cryptoConfig.getTagLength(), nonce);
+            cipher.init(Cipher.DECRYPT_MODE, encryptionKey, spec);
+        } else {
+            IvParameterSpec spec = new IvParameterSpec(nonce);
+            cipher.init(Cipher.DECRYPT_MODE, encryptionKey, spec);
+        }
 
         return cipher.doFinal(ciphertext);
     }
 
+    //for non-AEAD
+    private static byte[] encryptNonAEAD(byte[] data) throws Exception {
+        Cipher cipher = Cipher.getInstance(cryptoConfig.getCipher());
+
+        if (cryptoConfig.needsIV()) {
+            int ivLen = cryptoConfig.getIVLength();
+            byte[] iv = new byte[ivLen];
+            new SecureRandom().nextBytes(iv);
+
+            IvParameterSpec ivSpec = new IvParameterSpec(iv);
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, ivSpec);
+            byte[] ciphertext = cipher.doFinal(data);
+
+            byte[] result = new byte[iv.length + ciphertext.length];
+            System.arraycopy(iv, 0, result, 0, iv.length);
+            System.arraycopy(ciphertext, 0, result, iv.length, ciphertext.length);
+            return result;
+        } else {
+            //ECB mode (no IV)
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey);
+            return cipher.doFinal(data);
+        }
+    }
+
+    private static byte[] decryptNonAEAD(byte[] encrypted) throws Exception {
+        Cipher cipher = Cipher.getInstance(cryptoConfig.getCipher());
+
+        if (cryptoConfig.needsIV()) {
+            int ivLen = cryptoConfig.getIVLength();
+            byte[] iv = new byte[ivLen];
+            System.arraycopy(encrypted, 0, iv, 0, ivLen);
+
+            byte[] ciphertext = new byte[encrypted.length - ivLen];
+            System.arraycopy(encrypted, ivLen, ciphertext, 0, ciphertext.length);
+
+            IvParameterSpec ivSpec = new IvParameterSpec(iv);
+            cipher.init(Cipher.DECRYPT_MODE, encryptionKey, ivSpec);
+            return cipher.doFinal(ciphertext);
+        } else {
+            //ECB mode (no IV)
+            cipher.init(Cipher.DECRYPT_MODE, encryptionKey);
+            return cipher.doFinal(encrypted);
+        }
+    }
+
+    //HMAC
+    private static byte[] addHMAC(byte[] data) throws Exception {
+        Mac mac = Mac.getInstance(cryptoConfig.getHmacAlgorithm());
+        mac.init(macKey);
+        byte[] tag = mac.doFinal(data);
+
+        byte[] result = new byte[data.length + tag.length];
+        System.arraycopy(data, 0, result, 0, data.length);
+        System.arraycopy(tag, 0, result, data.length, tag.length);
+        return result;
+    }
+
+    private static byte[] verifyAndRemoveHMAC(byte[] dataWithMac) throws Exception {
+        Mac mac = Mac.getInstance(cryptoConfig.getHmacAlgorithm());
+        mac.init(macKey);
+
+        int macLen = mac.getMacLength();
+        byte[] data = new byte[dataWithMac.length - macLen];
+        byte[] receivedMac = new byte[macLen];
+
+        System.arraycopy(dataWithMac, 0, data, 0, data.length);
+        System.arraycopy(dataWithMac, data.length, receivedMac, 0, macLen);
+
+        byte[] computedMac = mac.doFinal(data);
+
+        if (!MessageDigest.isEqual(computedMac, receivedMac)) {
+            throw new SecurityException("HMAC verification failed! Data may have been tampered.");
+        }
+
+        return data;
+    }
+
+    //keys
     public static SecretKey loadOrGenKey(String filePath, char[] password) throws Exception {
         File keyFile = new File(filePath);
         if (keyFile.exists()) {
@@ -262,7 +392,7 @@ public class BlockStorageClient {
 
     private static SecretKey genKey() throws Exception {
         KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-        keyGen.init(AES_KEY_SIZE);
+        keyGen.init(cryptoConfig.getKeySize());
         return keyGen.generateKey();
     }
 
@@ -274,10 +404,10 @@ public class BlockStorageClient {
         SecretKey protectionKey = deriveKeyFromPassword(password, salt);
 
         // encrypt AES key with protection key
-        byte[] nonce = new byte[GCM_NONCE_LENGTH];
+        byte[] nonce = new byte[12];
         new SecureRandom().nextBytes(nonce);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
+        GCMParameterSpec spec = new GCMParameterSpec(128, nonce);
         cipher.init(Cipher.ENCRYPT_MODE, protectionKey, spec);
         byte[] ciphertext = cipher.doFinal(key.getEncoded());
 
@@ -307,11 +437,10 @@ public class BlockStorageClient {
         SecretKey protectionKey = deriveKeyFromPassword(password, salt);
 
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
+        GCMParameterSpec spec = new GCMParameterSpec(128, nonce);
         cipher.init(Cipher.DECRYPT_MODE, protectionKey, spec);
         byte[] keyBytes = cipher.doFinal(ciphertext);
 
         return new SecretKeySpec(keyBytes, "AES");
     }
-
 }

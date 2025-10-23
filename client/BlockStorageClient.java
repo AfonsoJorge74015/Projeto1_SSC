@@ -31,6 +31,7 @@ public class BlockStorageClient {
 
     private static final String INDEX_FILE = "client_index.ser";
     private static final String KEY_FILE = "keys.txt";
+    private static final String MAC_KEY_FILE = "mac_key.txt";
     private static final String CONFIG_FILE = "cryptoconfig.txt";
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
@@ -56,7 +57,7 @@ public class BlockStorageClient {
             System.out.print("Enter password for key: ");
             char[] password = scanner.nextLine().toCharArray(); 
             encryptionKey = loadOrGenKey( KEY_FILE, password);
-            macKey = genKey();
+            macKey = loadOrGenKey( MAC_KEY_FILE, password);
 
             while (true) {
                 System.out.print("Command (PUT/GET/LIST/SEARCH/EXIT): ");
@@ -135,8 +136,12 @@ public class BlockStorageClient {
 
                 byte[] blockData = encryptBlock(rawData);
 
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                byte[] blockIdHash = digest.digest(blockId.getBytes(StandardCharsets.UTF_8));
+                String blockIdHashStr = Base64.getEncoder().encodeToString(blockIdHash);
+
                 out.writeUTF("STORE_BLOCK");
-                out.writeUTF(blockId);
+                out.writeUTF(blockIdHashStr);
                 out.writeInt(blockData.length);
                 out.write(blockData);
 		        System.out.print("."); // Just for debug
@@ -145,8 +150,9 @@ public class BlockStorageClient {
                 if (blockNum == 1) {
                     out.writeInt(keywords.size());
                     for (String kw : keywords){
-                        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-                        byte[] token = digest.digest(kw.getBytes(StandardCharsets.UTF_8));
+                        Mac mac = Mac.getInstance("HmacSHA256");
+                        mac.init(macKey);
+                        byte[] token = mac.doFinal(kw.getBytes(StandardCharsets.UTF_8));
                         out.writeUTF(Base64.getEncoder().encodeToString(token));
                     }
                 } else {
@@ -162,6 +168,7 @@ public class BlockStorageClient {
                 blocks.add(blockId);
             }
         }
+        
         fileIndex.put(file.getName(), blocks);
 	    System.out.println();
 	    System.out.println("File stored with " + blocks.size() + " blocks.");
@@ -198,8 +205,9 @@ public class BlockStorageClient {
 
     private static void searchFiles(String keyword, DataOutputStream out, DataInputStream in) throws IOException, Exception {
         out.writeUTF("SEARCH");
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] token = digest.digest(keyword.getBytes(StandardCharsets.UTF_8));
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(macKey);
+        byte[] token = mac.doFinal(keyword.getBytes(StandardCharsets.UTF_8));
         out.writeUTF(Base64.getEncoder().encodeToString(token));
         out.flush();
         int count = in.readInt();

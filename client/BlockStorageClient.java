@@ -98,7 +98,7 @@ public class BlockStorageClient {
                             System.out.println("No stored files.");
                             break;
                         }
-                        System.out.println("Stored files:");
+                        System.out.println("\nStored files:");
                         for (String f : fileIndex.keySet()) System.out.println(" - " + f);
                         break;
 
@@ -126,34 +126,33 @@ public class BlockStorageClient {
 
     private static void putFile(File file, List<String> keywords, DataOutputStream out, DataInputStream in) throws IOException, Exception {
         List<String> blocks = new ArrayList<>();
+
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] fileHashBytes = digest.digest(file.getName().getBytes(StandardCharsets.UTF_8));
+        String fileHashStr = Base64.getEncoder().encodeToString(fileHashBytes);
+
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
             int bytesRead;
             int blockNum = 0;
             while ((bytesRead = fis.read(buffer)) != -1) {
                 byte[] rawData = Arrays.copyOf(buffer, bytesRead);
-                String blockId = file.getName() + "_block_" + blockNum++;
+                String blockId = fileHashStr + "_" + blockNum++;
 
                 byte[] blockData = encryptBlock(rawData);
 
-                MessageDigest digest = MessageDigest.getInstance("SHA-256");
-                byte[] blockIdHash = digest.digest(blockId.getBytes(StandardCharsets.UTF_8));
-                String blockIdHashStr = Base64.getEncoder().encodeToString(blockIdHash);
-
                 out.writeUTF("STORE_BLOCK");
-                out.writeUTF(blockIdHashStr);
+                out.writeUTF(blockId);
                 out.writeInt(blockData.length);
                 out.write(blockData);
-		        System.out.print("."); // Just for debug
 
                 // Send keywords for first block only
                 if (blockNum == 1) {
                     out.writeInt(keywords.size());
                     for (String kw : keywords){
-                        Mac mac = Mac.getInstance("HmacSHA256");
-                        mac.init(macKey);
-                        byte[] token = mac.doFinal(kw.getBytes(StandardCharsets.UTF_8));
-                        out.writeUTF(Base64.getEncoder().encodeToString(token));
+                        byte[] kwHashBytes = digest.digest(kw.getBytes(StandardCharsets.UTF_8));
+                        String kwHashStr = Base64.getEncoder().encodeToString(kwHashBytes);
+                        out.writeUTF(kwHashStr);
                     }
                 } else {
                     out.writeInt(0); // no keywords for other blocks
@@ -161,10 +160,15 @@ public class BlockStorageClient {
 
                 out.flush();
                 String response = in.readUTF();
+                if(response.equals("DUP")){
+                    System.out.println("File already exists.");
+                    return;
+                }
                 if (!response.equals("OK")) {
                     System.out.println("Error storing block: " + blockId);
                     return;
                 }
+                System.out.print(".");
                 blocks.add(blockId);
             }
         }
@@ -199,27 +203,31 @@ public class BlockStorageClient {
                 fos.write(data);
             }
         }
-	System.out.println();	
-        System.out.println("File reconstructed: retrieved_" + filename);
+        System.out.println("\nFile reconstructed: retrieved_" + filename);
     }
 
     private static void searchFiles(String keyword, DataOutputStream out, DataInputStream in) throws IOException, Exception {
         out.writeUTF("SEARCH");
-        Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(macKey);
-        byte[] token = mac.doFinal(keyword.getBytes(StandardCharsets.UTF_8));
-        out.writeUTF(Base64.getEncoder().encodeToString(token));
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] kwHashBytes = digest.digest(keyword.getBytes(StandardCharsets.UTF_8));
+        String kwHashStr = Base64.getEncoder().encodeToString(kwHashBytes);
+        out.writeUTF(kwHashStr);
         out.flush();
         int count = in.readInt();
         if(count > 0){
             System.out.println("\nSearch results:");
             for (int i = 0; i < count; i++) {
-                System.out.println(" - " + in.readUTF());
+                String hashedName = in.readUTF();
+                for(Map.Entry<String, List<String>> entry : fileIndex.entrySet()){
+                    if(entry.getValue().getFirst().equals(hashedName)){
+                        System.out.println(" - " + entry.getKey());
+                    }
+                }
             }
-            System.out.println();
         } else {
-            System.out.println("\nNo files found\n");
+            System.out.println("\nNo files found");
         }
+        System.out.println();
     }
 
     private static void saveIndex() {
@@ -426,7 +434,6 @@ public class BlockStorageClient {
             writer.newLine();
             writer.write(Base64.getEncoder().encodeToString(ciphertext));
         }
-
     }
 
     private static SecretKey deriveKeyFromPassword(char[] password, byte[] salt) throws Exception {

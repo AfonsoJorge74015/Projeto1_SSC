@@ -33,9 +33,8 @@ public class BlockStorageServer {
             DataInputStream in = new DataInputStream(socket.getInputStream());
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
         ) {
-            String command;
-            while ((command = in.readUTF()) != null) {
-                switch (command) {
+            while (true) {
+                switch (in.readUTF()) {
                     case "STORE_BLOCK":
                         storeBlock(in, out);
                         break;
@@ -63,6 +62,22 @@ public class BlockStorageServer {
 
     private static void storeBlock(DataInputStream in, DataOutputStream out) throws IOException {
         String blockId = in.readUTF();
+
+        if(metadata.containsKey(blockId)) {
+            //skip the sent data
+            int length = in.readInt();
+            in.skipBytes(length);
+
+            int keywordCount = in.readInt();
+            for (int i = 0; i < keywordCount; i++) {
+                in.readUTF();
+            }
+
+            out.writeUTF("DUP");
+            out.flush();
+            return;
+        }
+
         int length = in.readInt();
         byte[] data = new byte[length];
         in.readFully(data);
@@ -117,7 +132,7 @@ public class BlockStorageServer {
         List<String> results = new ArrayList<>();
         for (Map.Entry<String, List<String>> entry : metadata.entrySet()) {
             if (entry.getValue().contains(keyword)) {
-                results.add(entry.getKey().replace("_block_0", ""));
+                results.add(entry.getKey());
             }
         }
         out.writeInt(results.size());

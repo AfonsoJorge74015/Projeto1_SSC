@@ -2,6 +2,7 @@
 import java.io.*;
 import java.net.*;
 import java.nio.channels.Channel;
+import java.security.KeyStore;
 import java.util.*;
 import java.security.Key;
 import java.security.MessageDigest;
@@ -30,9 +31,12 @@ public class BlockStorageClient {
     private static SecretKey macKey;
 
     private static final String INDEX_FILE = "client_index.ser";
-    private static final String KEY_FILE = "keys.txt";
-    private static final String MAC_KEY_FILE = "mac_key.txt";
     private static final String CONFIG_FILE = "cryptoconfig.txt";
+
+    private static final String KEY_FILE = "client.keystore";
+    private static final String SALT_FILE = "keystore.salt";
+    private static final String KS_ENC_KEY = "encryptionKey";
+    private static final String KS_MAC_KEY = "macKey";
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
 
@@ -56,8 +60,8 @@ public class BlockStorageClient {
         ) {
             System.out.print("Enter password for key: ");
             char[] password = scanner.nextLine().toCharArray(); 
-            encryptionKey = loadOrGenKey( KEY_FILE, password);
-            macKey = loadOrGenKey( MAC_KEY_FILE, password);
+            encryptionKey = loadOrGenKey(KS_ENC_KEY, password);
+            macKey = loadOrGenKey(KS_MAC_KEY, password);
 
             while (true) {
                 System.out.print("Command (PUT/GET/LIST/SEARCH/EXIT): ");
@@ -395,15 +399,39 @@ public class BlockStorageClient {
     }
 
     //keys
-    public static SecretKey loadOrGenKey(String filePath, char[] password) throws Exception {
-        File keyFile = new File(filePath);
-        if (keyFile.exists()) {
-            return loadKey(filePath, password);
+    private static KeyStore createKeyStore(String fileName, String pw) throws Exception {
+        File file = new File(fileName);
+
+        final KeyStore keyStore = KeyStore.getInstance("JCEKS");
+        if (file.exists()) {
+            keyStore.load(new FileInputStream(file), pw.toCharArray());
         } else {
-            SecretKey newKey = genKey();
-            saveKey(newKey, filePath, password);
-            return newKey;
+            keyStore.load(null, null);
+            keyStore.store(new FileOutputStream(fileName), pw.toCharArray());
         }
+        return keyStore;
+    }
+
+
+    private static SecretKey loadOrGenKey(String keyAlias, char[] password) throws Exception {
+        char[] derivedPassword = deriveKeyFromPassword(password);
+
+        KeyStore keyStore = createKeyStore(KEY_FILE, new String(derivedPassword));
+
+        KeyStore.PasswordProtection keyPassword = new KeyStore.PasswordProtection(derivedPassword);
+
+        SecretKey key;
+        if (keyStore.containsAlias(keyAlias)) {
+            KeyStore.Entry entry = keyStore.getEntry(keyAlias, keyPassword);
+            key = ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+        } else {
+            key = genKey();
+            KeyStore.SecretKeyEntry keyStoreEntry = new KeyStore.SecretKeyEntry(key);
+            keyStore.setEntry(keyAlias, keyStoreEntry, keyPassword);
+
+            keyStore.store(new FileOutputStream(KEY_FILE), derivedPassword);
+        }
+        return key;
     }
 
     private static SecretKey genKey() throws Exception {
@@ -412,50 +440,41 @@ public class BlockStorageClient {
         return keyGen.generateKey();
     }
 
-    
-    private static void saveKey(SecretKey key, String filePath, char[] password) throws Exception {
-        // derive protection key
-        byte[] salt = new byte[SALT_LENGTH];
-        new SecureRandom().nextBytes(salt);
-        SecretKey protectionKey = deriveKeyFromPassword(password, salt);
-
-        // encrypt AES key with protection key
-        byte[] nonce = new byte[12];
-        new SecureRandom().nextBytes(nonce);
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(128, nonce);
-        cipher.init(Cipher.ENCRYPT_MODE, protectionKey, spec);
-        byte[] ciphertext = cipher.doFinal(key.getEncoded());
-
-        try (BufferedWriter writer = Files.newBufferedWriter(Paths.get(filePath))) {
-            writer.write(Base64.getEncoder().encodeToString(salt));
-            writer.newLine();
-            writer.write(Base64.getEncoder().encodeToString(nonce));
-            writer.newLine();
-            writer.write(Base64.getEncoder().encodeToString(ciphertext));
-        }
-    }
-
-    private static SecretKey deriveKeyFromPassword(char[] password, byte[] salt) throws Exception {
+    private static char[] deriveKeyFromPassword(char[] password) throws Exception {
+        byte[] salt = loadOrGenerateSalt();
         SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
         KeySpec spec = new PBEKeySpec(password, salt, PBKDF2_ITERATIONS, PROTECTION_KEY_SIZE);
         SecretKey tmp = factory.generateSecret(spec);
-        return new SecretKeySpec(tmp.getEncoded(), "AES");
+        byte[] derivedBytes = tmp.getEncoded();
+
+        String derivedHex = bytesToHex(derivedBytes);
+        return derivedHex.toCharArray();
     }
 
-    private static SecretKey loadKey(String filePath, char[] password) throws Exception {
-        List<String> lines = Files.readAllLines(Paths.get(filePath));
-        byte[] salt = Base64.getDecoder().decode(lines.get(0));
-        byte[] nonce = Base64.getDecoder().decode(lines.get(1));
-        byte[] ciphertext = Base64.getDecoder().decode(lines.get(2));
+    private static byte[] loadOrGenerateSalt() throws Exception {
+        File saltFile = new File(SALT_FILE);
 
-        SecretKey protectionKey = deriveKeyFromPassword(password, salt);
+        if (saltFile.exists()) {
+            List<String> lines = Files.readAllLines(Paths.get(SALT_FILE));
+            return Base64.getDecoder().decode(lines.get(0));
+        } else {
+            byte[] salt = new byte[SALT_LENGTH];
+            new SecureRandom().nextBytes(salt);
 
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(128, nonce);
-        cipher.init(Cipher.DECRYPT_MODE, protectionKey, spec);
-        byte[] keyBytes = cipher.doFinal(ciphertext);
+            try (BufferedWriter writer = Files.newBufferedWriter(Paths.get(SALT_FILE))) {
+                writer.write(Base64.getEncoder().encodeToString(salt));
+            }
 
-        return new SecretKeySpec(keyBytes, "AES");
+            return salt;
+        }
+    }
+
+    //utils
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 }

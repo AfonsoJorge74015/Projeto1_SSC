@@ -1,23 +1,18 @@
 
 import java.io.*;
 import java.net.*;
-import java.nio.channels.Channel;
-import java.security.KeyStore;
-import java.util.*;
-import java.security.Key;
-import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.security.spec.KeySpec;
+import java.util.*;
 import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
-import java.security.SecureRandom;
-import java.util.Base64;
 import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
 import javax.crypto.spec.PBEKeySpec;
-import java.security.spec.KeySpec;
-import javax.sql.rowset.spi.SyncResolver;
 
 public class BlockStorageClient {
     private static final int PORT = 5000;
@@ -32,6 +27,7 @@ public class BlockStorageClient {
 
     private static final String INDEX_FILE = "client_index.ser";
     private static final String CONFIG_FILE = "cryptoconfig.txt";
+    private static final String TEST_FILE = "cltest.txt";
 
     private static final String KEY_FILE = "client.keystore";
     private static final String SALT_FILE = "keystore.salt";
@@ -56,7 +52,8 @@ public class BlockStorageClient {
         try (
             DataInputStream in = new DataInputStream(socket.getInputStream());
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            Scanner scanner = new Scanner(System.in)
+            Scanner scanner = new Scanner(new File ("cltest.txt"))
+            //Scanner scanner = new Scanner(System.in)
         ) {
             System.out.print("Enter password for key: ");
             char[] password = scanner.nextLine().toCharArray(); 
@@ -223,7 +220,7 @@ public class BlockStorageClient {
             for (int i = 0; i < count; i++) {
                 String hashedName = in.readUTF();
                 for(Map.Entry<String, List<String>> entry : fileIndex.entrySet()){
-                    if(entry.getValue().getFirst().equals(hashedName)){
+                    if(entry.getValue().get(0).equals(hashedName)){
                         System.out.println(" - " + entry.getKey());
                     }
                 }

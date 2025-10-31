@@ -1,0 +1,10 @@
+123
+PUT
+Notas projeto.txt
+notas
+SEARCH
+notas
+GET
+Notas projeto.txt
+LIST
+EXIT

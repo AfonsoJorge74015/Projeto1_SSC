@@ -159,7 +159,7 @@ public class BlockStorageClient {
                         out.writeUTF(kwHashStr);
                     }
                 } else {
-                    out.writeInt(0); // no keywords for other blocks
+                    out.writeInt(0); //no keywords for other blocks
                 }
 
                 out.flush();
@@ -200,10 +200,10 @@ public class BlockStorageClient {
                     return;
                 }
                 byte[] encryptedData = new byte[length];
-                in.readFully(encryptedData);           // read from server
-                byte[] data = decryptBlock(encryptedData); // then decrypt
+                in.readFully(encryptedData);
+                byte[] data = decryptBlock(encryptedData);
 
-		        System.out.print("."); // Just for debug
+		        System.out.print(".");
                 fos.write(data);
             }
         }

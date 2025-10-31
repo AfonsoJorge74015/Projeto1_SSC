@@ -5,14 +5,14 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class BlockStorageServer {
     private static final int PORT = 5000;
     private static final String BLOCK_DIR = "blockstorage";
     private static final String META_FILE = "metadata.ser";
 
-    // Map filename -> list of keywords
-    private static Map<String, List<String>> metadata = new HashMap<>();
+    private static Map<String, List<String>> metadata = new ConcurrentHashMap<>();
 
     public static void main(String[] args) throws IOException {
         File dir = new File(BLOCK_DIR);
@@ -82,13 +82,11 @@ public class BlockStorageServer {
         byte[] data = new byte[length];
         in.readFully(data);
 
-        // Write block to disk
         File blockFile = new File(BLOCK_DIR, blockId);
         try (FileOutputStream fos = new FileOutputStream(blockFile)) {
             fos.write(data);
         }
 
-        // Read optional metadata (keywords)
         int keywordCount = in.readInt();
         if (keywordCount > 0) {
             List<String> keywords = new ArrayList<>();

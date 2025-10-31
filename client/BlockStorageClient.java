@@ -56,7 +56,7 @@ public class BlockStorageClient {
             //Scanner scanner = new Scanner(System.in)
         ) {
             System.out.print("Enter password for key: ");
-            char[] password = scanner.nextLine().toCharArray(); 
+            char[] password = scanner.nextLine().toCharArray();
             encryptionKey = loadOrGenKey(KS_ENC_KEY, password);
             macKey = loadOrGenKey(KS_MAC_KEY, password);
 
@@ -130,7 +130,7 @@ public class BlockStorageClient {
 
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] fileHashBytes = digest.digest(file.getName().getBytes(StandardCharsets.UTF_8));
-        String fileHashStr = Base64.getEncoder().encodeToString(fileHashBytes);
+        String fileHashStr = Base64.getUrlEncoder().encodeToString(fileHashBytes);
 
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
@@ -152,7 +152,7 @@ public class BlockStorageClient {
                     out.writeInt(keywords.size());
                     for (String kw : keywords){
                         byte[] kwHashBytes = digest.digest(kw.getBytes(StandardCharsets.UTF_8));
-                        String kwHashStr = Base64.getEncoder().encodeToString(kwHashBytes);
+                        String kwHashStr = Base64.getUrlEncoder().encodeToString(kwHashBytes);
                         out.writeUTF(kwHashStr);
                     }
                 } else {
@@ -173,7 +173,7 @@ public class BlockStorageClient {
                 blocks.add(blockId);
             }
         }
-        
+
         fileIndex.put(file.getName(), blocks);
 	    System.out.println();
 	    System.out.println("File stored with " + blocks.size() + " blocks.");
@@ -182,7 +182,7 @@ public class BlockStorageClient {
     private static void getFile(String filename, DataOutputStream out, DataInputStream in) throws Exception {
         List<String> blocks = fileIndex.get(filename);
         if (blocks == null) {
-	    System.out.println();	    
+	    System.out.println();
             System.out.println("File not found in local index.");
             return;
         }
@@ -211,7 +211,7 @@ public class BlockStorageClient {
         out.writeUTF("SEARCH");
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] kwHashBytes = digest.digest(keyword.getBytes(StandardCharsets.UTF_8));
-        String kwHashStr = Base64.getEncoder().encodeToString(kwHashBytes);
+        String kwHashStr = Base64.getUrlEncoder().encodeToString(kwHashBytes);
         out.writeUTF(kwHashStr);
         out.flush();
         int count = in.readInt();
@@ -453,13 +453,13 @@ public class BlockStorageClient {
 
         if (saltFile.exists()) {
             List<String> lines = Files.readAllLines(Paths.get(SALT_FILE));
-            return Base64.getDecoder().decode(lines.get(0));
+            return Base64.getUrlDecoder().decode(lines.get(0));
         } else {
             byte[] salt = new byte[SALT_LENGTH];
             new SecureRandom().nextBytes(salt);
 
             try (BufferedWriter writer = Files.newBufferedWriter(Paths.get(SALT_FILE))) {
-                writer.write(Base64.getEncoder().encodeToString(salt));
+                writer.write(Base64.getUrlEncoder().encodeToString(salt));
             }
 
             return salt;
